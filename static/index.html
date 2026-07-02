@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetVox — Diagnostic réseau vocal (RAG)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F4F6F8; --card:#FFFFFF; --ink:#16232E; --ink-soft:#5A6B78;
+  --line:#D9E0E6; --accent:#0B7285; --accent-deep:#095C6B; --accent-tint:#E4F1F3;
+  --amber:#9A5B00; --amber-tint:#FBF1E2; --ok:#2B7A43; --err:#B03030;
+  --mono:'IBM Plex Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font-family:'Archivo',sans-serif;font-size:15px;line-height:1.55;min-height:100vh}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button{font-family:inherit;cursor:pointer}
+
+header{border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:20}
+.head-inner{max-width:1080px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand h1{font-size:20px;font-weight:800;letter-spacing:-.02em}
+.brand h1 span{color:var(--accent)}
+.brand small{font-family:var(--mono);font-size:11px;color:var(--ink-soft)}
+.mode-badge{font-family:var(--mono);font-size:10.5px;padding:3px 9px;border-radius:99px;background:var(--accent-tint);color:var(--accent-deep)}
+.mode-badge.tfidf{background:var(--amber-tint);color:var(--amber)}
+nav{margin-left:auto;display:flex;gap:4px}
+nav button{border:none;background:none;padding:8px 14px;border-radius:8px;font-size:14px;font-weight:500;color:var(--ink-soft)}
+nav button.active{background:var(--accent-tint);color:var(--accent-deep);font-weight:600}
+nav button:hover{color:var(--ink)}
+
+main{max-width:1080px;margin:0 auto;padding:28px 20px 80px}
+.tab{display:none}
+.tab.visible{display:block}
+
+.pipeline{display:flex;align-items:center;margin:0 0 26px;padding:14px 18px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+.pstep{display:flex;align-items:center;gap:9px;flex:1;min-width:0}
+.pstep .dot{width:26px;height:26px;border-radius:50%;flex:none;border:2px solid var(--line);background:var(--paper);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:var(--ink-soft);transition:all .3s}
+.pstep .lbl{font-size:12.5px;color:var(--ink-soft);line-height:1.25;min-width:0}
+.pstep .lbl b{display:block;font-size:13px;color:var(--ink);font-weight:600}
+.pstep.on .dot{border-color:var(--accent);color:var(--accent-deep);background:var(--accent-tint);animation:pulse 1.2s infinite}
+.pstep.done .dot{border-color:var(--accent);background:var(--accent);color:#fff}
+.plink{height:2px;background:var(--line);flex:0 0 34px;margin:0 10px;border-radius:2px}
+.plink.done{background:var(--accent)}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(11,114,133,.25)}50%{box-shadow:0 0 0 7px rgba(11,114,133,0)}}
+@media(prefers-reduced-motion:reduce){.pstep.on .dot{animation:none}}
+
+.grid{display:grid;grid-template-columns:380px 1fr;gap:22px;align-items:start}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px}
+.card h2{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:14px}
+
+.mic-zone{display:flex;flex-direction:column;align-items:center;gap:12px;padding:8px 0 16px}
+.mic-btn{width:96px;height:96px;border-radius:50%;border:none;position:relative;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;transition:background .2s,transform .1s}
+.mic-btn:hover{background:var(--accent-deep)}
+.mic-btn:active{transform:scale(.96)}
+.mic-btn svg{width:38px;height:38px}
+.mic-btn.rec{background:var(--err)}
+.mic-btn.rec::before,.mic-btn.rec::after{content:'';position:absolute;inset:0;border-radius:50%;border:2px solid var(--err);animation:ring 1.6s ease-out infinite}
+.mic-btn.rec::after{animation-delay:.8s}
+@keyframes ring{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.75);opacity:0}}
+@media(prefers-reduced-motion:reduce){.mic-btn.rec::before,.mic-btn.rec::after{animation:none;opacity:0}}
+.mic-hint{font-size:13px;color:var(--ink-soft);text-align:center}
+.mic-hint b{color:var(--err);font-weight:600}
+textarea#transcript{width:100%;min-height:88px;resize:vertical;border:1px solid var(--line);border-radius:9px;padding:11px 13px;font-family:var(--mono);font-size:13.5px;line-height:1.5;color:var(--ink);background:var(--paper)}
+textarea#transcript:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
+.analyse-btn{margin-top:12px;width:100%;padding:12px;border:none;border-radius:9px;background:var(--ink);color:#fff;font-size:15px;font-weight:600}
+.analyse-btn:hover{background:#000}
+.analyse-btn:disabled{background:var(--line);color:var(--ink-soft);cursor:default}
+.exemples{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
+.exemples p{font-size:12px;color:var(--ink-soft);margin-bottom:8px}
+.exemples button{display:block;width:100%;text-align:left;margin-bottom:6px;background:none;border:1px dashed var(--line);border-radius:8px;padding:8px 11px;font-size:13px;color:var(--ink-soft)}
+.exemples button:hover{border-color:var(--accent);color:var(--accent-deep)}
+
+.placeholder{color:var(--ink-soft);font-size:14px;padding:30px 10px;text-align:center}
+.statut{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;padding:4px 11px;border-radius:99px;margin-bottom:14px}
+.statut::before{content:'';width:7px;height:7px;border-radius:50%;background:currentColor}
+.statut.ok{background:#E7F3EB;color:var(--ok)}
+.statut.absent{background:var(--amber-tint);color:var(--amber)}
+.statut.err{background:#FBE9E9;color:var(--err)}
+.diag-cause{font-size:17px;font-weight:600;line-height:1.4;margin-bottom:16px}
+.diag-etapes{list-style:none;counter-reset:et}
+.diag-etapes li{counter-increment:et;position:relative;padding:0 0 14px 40px}
+.diag-etapes li::before{content:counter(et,decimal-leading-zero);position:absolute;left:0;top:1px;font-family:var(--mono);font-size:12px;font-weight:500;color:var(--accent-deep);background:var(--accent-tint);border-radius:6px;padding:2px 6px}
+.diag-etapes li:not(:last-child)::after{content:'';position:absolute;left:14px;top:26px;bottom:2px;width:1px;background:var(--line)}
+.diag-note{font-size:13px;color:var(--ink-soft);border-left:3px solid var(--line);padding-left:12px;margin-top:6px}
+.tts-btn{margin-top:18px;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:none;border-radius:9px;padding:9px 14px;font-size:13.5px;font-weight:500;color:var(--ink)}
+.tts-btn:hover{border-color:var(--accent);color:var(--accent-deep)}
+.absent-box{padding:6px 0}
+.absent-box h3{font-size:16px;font-weight:600;margin-bottom:8px}
+.absent-box p{font-size:14px;color:var(--ink-soft)}
+
+.sources{margin-top:22px}
+.sources h2{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 10px}
+.src{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:9px;background:var(--paper)}
+.src.used{border-color:var(--accent);background:var(--accent-tint)}
+.src-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.src-head .cid{font-family:var(--mono);font-size:11px;color:var(--accent-deep);font-weight:500}
+.src-head .titre{font-size:13.5px;font-weight:600;flex:1;min-width:0}
+.src-head .type{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);border:1px solid var(--line);border-radius:5px;padding:1px 6px;background:var(--card)}
+.src-head .badge-used{font-size:11px;font-weight:600;color:var(--accent-deep)}
+.score-bar{height:4px;background:var(--line);border-radius:3px;margin:8px 0 4px;overflow:hidden}
+.score-bar i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.src .score-txt{font-family:var(--mono);font-size:11px;color:var(--ink-soft)}
+.src .extrait{font-size:12.5px;color:var(--ink-soft);margin-top:7px;display:none;white-space:pre-wrap}
+.src.open .extrait{display:block}
+.src-toggle{background:none;border:none;font-size:12px;color:var(--accent-deep);padding:4px 0 0;text-decoration:underline}
+
+.kb-meta{font-family:var(--mono);font-size:12.5px;color:var(--ink-soft);margin-bottom:18px}
+.doc{border:1px solid var(--line);border-radius:10px;background:var(--card);margin-bottom:10px;overflow:hidden}
+.doc-head{width:100%;display:flex;align-items:center;gap:10px;padding:13px 16px;background:none;border:none;text-align:left}
+.doc-head:hover{background:var(--paper)}
+.doc-head .titre{font-size:14.5px;font-weight:600;flex:1}
+.doc-head .type{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);border:1px solid var(--line);border-radius:5px;padding:2px 7px;flex:none}
+.doc-head .chev{color:var(--ink-soft);flex:none;transition:transform .2s}
+.doc.open .chev{transform:rotate(90deg)}
+.doc-body{display:none;padding:12px 16px 15px;font-size:13.5px;color:var(--ink-soft);white-space:pre-wrap;border-top:1px solid var(--line)}
+.doc.open .doc-body{display:block}
+.doc .src-tag{font-family:var(--mono);font-size:11px;color:var(--accent-deep);padding:0 16px 12px;display:none}
+.doc.open .src-tag{display:block}
+.add-doc{margin-top:28px}
+.add-doc h3{font-size:15px;font-weight:600;margin-bottom:4px}
+.add-doc p.sub{font-size:13px;color:var(--ink-soft);margin-bottom:14px}
+.add-doc label{display:block;font-size:12.5px;font-weight:500;margin:12px 0 5px}
+.add-doc input[type=text],.add-doc select,.add-doc textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-family:inherit;font-size:14px;background:var(--paper);color:var(--ink)}
+.add-doc textarea{min-height:110px;resize:vertical;font-family:var(--mono);font-size:13px}
+.add-doc .submit{margin-top:14px;padding:10px 18px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:14px;font-weight:600}
+.add-doc .submit:hover{background:var(--accent-deep)}
+.add-doc .submit:disabled{background:var(--line);color:var(--ink-soft)}
+.flash{margin-top:12px;font-size:13.5px;color:var(--ok);display:none}
+
+.hist-empty{color:var(--ink-soft);font-size:14px;padding:24px 4px}
+.hist{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:14px 16px;margin-bottom:10px}
+.hist .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.hist .date{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft)}
+.hist .demande{font-size:14px;font-weight:600;margin-bottom:4px}
+.hist .resume{font-size:13px;color:var(--ink-soft)}
+.hist-clear{margin-top:6px;border:1px solid var(--line);background:none;border-radius:8px;padding:8px 14px;font-size:13px;color:var(--err)}
+.hist-clear:hover{border-color:var(--err)}
+
+.loader{display:inline-block;width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-3px;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.err-msg{color:var(--err);font-size:13.5px;margin-top:10px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="head-inner">
+    <div class="brand">
+      <h1>Net<span>Vox</span></h1>
+      <small>diagnostic réseau · RAG documentaire</small>
+    </div>
+    <span class="mode-badge" id="modeBadge">connexion…</span>
+    <nav>
+      <button class="active" data-tab="diag">Diagnostic</button>
+      <button data-tab="kb">Base documentaire</button>
+      <button data-tab="hist">Historique</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section id="tab-diag" class="tab visible">
+  <div class="pipeline" aria-label="Étapes du traitement">
+    <div class="pstep" id="ps1"><span class="dot">1</span><span class="lbl"><b>Transcription</b>capture vocale → texte</span></div>
+    <div class="plink" id="pl1"></div>
+    <div class="pstep" id="ps2"><span class="dot">2</span><span class="lbl"><b>Recherche</b>embeddings + cosinus</span></div>
+    <div class="plink" id="pl2"></div>
+    <div class="pstep" id="ps3"><span class="dot">3</span><span class="lbl"><b>Génération</b>diagnostic sourcé</span></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Décrire un problème</h2>
+      <div class="mic-zone">
+        <button class="mic-btn" id="micBtn" aria-label="Décrire un problème à la voix">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+        </button>
+        <p class="mic-hint" id="micHint">Appuyez sur le micro et décrivez l'incident</p>
+      </div>
+      <textarea id="transcript" placeholder="La transcription apparaît ici — vous pouvez aussi taper ou corriger le texte."></textarea>
+      <button class="analyse-btn" id="analyseBtn">Lancer le diagnostic</button>
+      <p class="err-msg" id="captureErr" style="display:none"></p>
+      <div class="exemples">
+        <p>Exemples pour la démo :</p>
+        <button data-ex="Le poste de la salle 204 n'a plus internet depuis ce matin">« Le poste de la salle 204 n'a plus internet depuis ce matin » — cas couvert</button>
+        <button data-ex="La messagerie Exchange refuse d'envoyer les mails depuis hier">« La messagerie Exchange refuse d'envoyer les mails » — hors base</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Diagnostic</h2>
+      <div id="resultat">
+        <p class="placeholder">Le diagnostic généré s'affichera ici, avec la cause probable, les étapes de résolution et les sources documentaires utilisées.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="tab-kb" class="tab">
+  <div class="card">
+    <h2>Base de connaissance</h2>
+    <p class="kb-meta" id="kbMeta"></p>
+    <div id="kbList"></div>
+
+    <div class="add-doc">
+      <h3>Ajouter un document à chaud</h3>
+      <p class="sub">Le document est découpé, vectorisé et immédiatement interrogeable — sans redémarrage du serveur.</p>
+      <label for="ndTitre">Titre</label>
+      <input type="text" id="ndTitre" placeholder="Ex. Procédure — Réinitialisation borne Wi-Fi">
+      <label for="ndType">Type</label>
+      <select id="ndType">
+        <option value="procédure">Procédure</option>
+        <option value="ticket résolu">Ticket résolu</option>
+        <option value="faq">FAQ</option>
+      </select>
+      <label for="ndContenu">Contenu</label>
+      <textarea id="ndContenu" placeholder="Texte du document (symptômes, cause, étapes de résolution…)"></textarea>
+      <button class="submit" id="ndSubmit">Ajouter à la base</button>
+      <p class="flash" id="ndFlash"></p>
+    </div>
+  </div>
+</section>
+
+<section id="tab-hist" class="tab">
+  <div class="card">
+    <h2>Demandes traitées</h2>
+    <div id="histList"><p class="hist-empty">Aucune demande traitée pour l'instant.</p></div>
+    <button class="hist-clear" id="histClear" style="display:none">Vider l'historique</button>
+  </div>
+</section>
+
+</main>
+
+<script>
+/* ============ Utilitaires ============ */
+function echapper(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+async function api(chemin, options){
+  const r = await fetch(chemin, options);
+  const data = await r.json().catch(()=>({erreur:"Réponse illisible du serveur"}));
+  if(!r.ok) throw new Error(data.erreur || ("Erreur HTTP "+r.status));
+  return data;
+}
+
+/* ============ Statut / mode d'indexation ============ */
+const modeBadge = document.getElementById("modeBadge");
+async function chargerStatut(){
+  try{
+    const s = await api("/api/status");
+    if(s.mode==="embeddings"){
+      modeBadge.textContent = "embeddings · "+s.modele_embeddings;
+      modeBadge.classList.remove("tfidf");
+    } else {
+      modeBadge.textContent = "fallback TF-IDF (API embeddings indisponible)";
+      modeBadge.classList.add("tfidf");
+    }
+  }catch(e){
+    modeBadge.textContent = "serveur injoignable";
+    modeBadge.classList.add("tfidf");
+  }
+}
+
+/* ============ Pipeline visuel ============ */
+function setPipeline(step, state){
+  for(let i=1;i<=3;i++){
+    const el = document.getElementById("ps"+i);
+    el.classList.remove("on","done");
+    if(i<step) el.classList.add("done");
+    if(i===step) el.classList.add(state);
+  }
+  document.getElementById("pl1").classList.toggle("done", step>1 || (step===1&&state==="done"));
+  document.getElementById("pl2").classList.toggle("done", step>2 || (step===2&&state==="done"));
+}
+function resetPipeline(){ setPipeline(0,"done"); }
+
+/* ============ Capture vocale (Web Speech API) ============ */
+const micBtn = document.getElementById("micBtn");
+const micHint = document.getElementById("micHint");
+const transcriptEl = document.getElementById("transcript");
+const captureErr = document.getElementById("captureErr");
+let reco = null, recording = false;
+
+const MSG_ERREURS_RECO = {
+  "no-speech":"Aucune parole détectée — parlez après avoir appuyé sur le micro, ou tapez votre demande.",
+  "not-allowed":"Accès au micro refusé — autorisez le micro dans le navigateur, ou tapez votre demande.",
+  "audio-capture":"Aucun micro détecté sur ce poste — tapez votre demande.",
+  "network":"La reconnaissance vocale du navigateur nécessite une connexion Internet — tapez votre demande."
+};
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if(SR){
+  reco = new SR();
+  reco.lang = "fr-FR";
+  reco.interimResults = true;
+  reco.continuous = false;
+  reco.onresult = (e)=>{
+    let final = "", interim = "";
+    for(const r of e.results){ (r.isFinal ? final += r[0].transcript : interim += r[0].transcript); }
+    transcriptEl.value = (final + interim).trim();
+  };
+  reco.onend = ()=>{ recording=false; micBtn.classList.remove("rec"); micHint.innerHTML = "Appuyez sur le micro et décrivez l'incident"; };
+  reco.onerror = (e)=>{
+    recording=false; micBtn.classList.remove("rec");
+    captureErr.style.display="block";
+    captureErr.textContent = MSG_ERREURS_RECO[e.error] || ("Reconnaissance vocale interrompue ("+e.error+") — vous pouvez taper votre demande.");
+  };
+} else {
+  micHint.textContent = "Reconnaissance vocale non supportée par ce navigateur (utilisez Chrome ou Edge) — tapez votre demande ci-dessous.";
+  micBtn.disabled = true; micBtn.style.opacity=".45";
+}
+
+micBtn.addEventListener("click", ()=>{
+  if(!reco) return;
+  captureErr.style.display="none";
+  if(recording){ reco.stop(); return; }
+  transcriptEl.value = "";
+  try{
+    reco.start(); recording = true;
+    micBtn.classList.add("rec");
+    micHint.innerHTML = "<b>Écoute en cours…</b> appuyez à nouveau pour arrêter";
+    setPipeline(1,"on");
+  }catch(e){ /* start() appelé deux fois */ }
+});
+
+document.querySelectorAll(".exemples button").forEach(b=>{
+  b.addEventListener("click", ()=>{ transcriptEl.value = b.dataset.ex; captureErr.style.display="none"; });
+});
+
+/* ============ Diagnostic ============ */
+const resultat = document.getElementById("resultat");
+const analyseBtn = document.getElementById("analyseBtn");
+let dernierDiag = null;
+
+function blocSources(sources, utilisees){
+  if(!sources || !sources.length) return "";
+  const setU = new Set(utilisees||[]);
+  const maxScore = Math.max(...sources.map(s=>s.score), 0.0001);
+  return `<div class="sources"><h2>Sources documentaires (traçabilité)</h2>` +
+    sources.map(s=>{
+      const used = setU.has(s.cid);
+      const pct = Math.max(4, Math.round(s.score/maxScore*100));
+      return `<div class="src ${used?"used":""}">
+        <div class="src-head">
+          <span class="cid">${echapper(s.cid)}</span>
+          <span class="titre">${echapper(s.titre)}</span>
+          <span class="type">${echapper(s.type)}</span>
+          ${used?'<span class="badge-used">✓ utilisée</span>':""}
+        </div>
+        <div class="score-bar"><i style="width:${pct}%"></i></div>
+        <span class="score-txt">similarité cosinus : ${s.score.toFixed(3)}</span>
+        <div class="extrait">${echapper(s.texte)}</div>
+        <button class="src-toggle" onclick="this.parentElement.classList.toggle('open');this.textContent=this.parentElement.classList.contains('open')?'Masquer l\\'extrait':'Voir l\\'extrait'">Voir l'extrait</button>
+      </div>`;
+    }).join("") + `</div>`;
+}
+
+function afficherDiagnostic(d){
+  dernierDiag = d;
+  resultat.innerHTML =
+    '<span class="statut ok">diagnostic généré à partir de la base</span>' +
+    '<p class="diag-cause">'+echapper(d.cause_probable||"")+'</p>' +
+    '<ol class="diag-etapes">'+(d.etapes||[]).map(e=>'<li>'+echapper(e)+'</li>').join("")+'</ol>' +
+    (d.remarque ? '<p class="diag-note">'+echapper(d.remarque)+'</p>' : "") +
+    (window.speechSynthesis ? '<button class="tts-btn" id="ttsBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg> Lire le diagnostic à voix haute</button>' : "") +
+    blocSources(d.sources, d.sources_utilisees);
+  const tts = document.getElementById("ttsBtn");
+  if(tts) tts.addEventListener("click", lireDiagnostic);
+}
+
+function afficherAbsent(demande, d){
+  resultat.innerHTML =
+    '<span class="statut absent">information absente de la base</span>' +
+    '<div class="absent-box"><h3>Aucun diagnostic fiable possible pour cette demande.</h3>' +
+    '<p>La base de connaissance ne contient pas de document suffisamment pertinent pour « '+echapper(demande)+' ». Plutôt que d\'inventer une réponse, le système s\'arrête ici.</p>' +
+    (d.remarque ? '<p class="diag-note" style="margin-top:10px">'+echapper(d.remarque)+'</p>' : "") +
+    '<p style="font-size:13px;color:var(--ink-soft);margin-top:12px">Piste : ajouter la procédure correspondante via l\'onglet « Base documentaire », puis relancer la demande.</p></div>' +
+    blocSources(d.sources, []);
+}
+
+async function lancerDiagnostic(){
+  const demande = transcriptEl.value.trim();
+  if(!demande){ transcriptEl.focus(); return; }
+  analyseBtn.disabled = true;
+  window.speechSynthesis && speechSynthesis.cancel();
+
+  setPipeline(1,"done");
+  setPipeline(2,"on");
+  resultat.innerHTML = '<p class="placeholder"><span class="loader"></span>Recherche des documents pertinents, puis génération…</p>';
+  const bascule = setTimeout(()=>setPipeline(3,"on"), 900);
+
+  try{
+    const d = await api("/api/diagnostic", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({demande})
+    });
+    clearTimeout(bascule);
+    setPipeline(3,"done");
+    if(d.statut==="absent"){
+      resetPipeline();
+      afficherAbsent(demande, d);
+      enregistrerHistorique({demande, statut:"absent", resume:"Information absente de la base documentaire"});
+    } else {
+      afficherDiagnostic(d);
+      enregistrerHistorique({demande, statut:"ok", resume:d.cause_probable, nb:(d.sources_utilisees||[]).length});
+    }
+  }catch(e){
+    clearTimeout(bascule);
+    resetPipeline();
+    resultat.innerHTML = '<span class="statut err">erreur</span><p class="diag-cause">La génération a échoué.</p><p class="diag-note">'+echapper(e.message)+'</p><p style="font-size:13px;color:var(--ink-soft);margin-top:10px">Vérifiez que le serveur tourne (python3 server.py) et que la clé API dans config.json est valide.</p>';
+    enregistrerHistorique({demande, statut:"erreur", resume:e.message});
+  }
+  analyseBtn.disabled = false;
+}
+analyseBtn.addEventListener("click", lancerDiagnostic);
+
+/* ============ Synthèse vocale (bonus) ============ */
+function lireDiagnostic(){
+  if(!dernierDiag || !window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  const texte = "Cause probable : " + dernierDiag.cause_probable + ". " +
+    (dernierDiag.etapes||[]).map((e,i)=>"Étape "+(i+1)+" : "+e).join(". ");
+  const u = new SpeechSynthesisUtterance(texte);
+  u.lang = "fr-FR"; u.rate = 1.02;
+  speechSynthesis.speak(u);
+}
+
+/* ============ Historique (bonus, persistant en localStorage) ============ */
+const histList = document.getElementById("histList");
+const histClear = document.getElementById("histClear");
+let HISTORIQUE = [];
+try{ HISTORIQUE = JSON.parse(localStorage.getItem("netvox_historique")||"[]"); }catch(e){}
+
+function enregistrerHistorique(entree){
+  entree.date = new Date().toLocaleString("fr-FR",{dateStyle:"short",timeStyle:"short"});
+  HISTORIQUE.unshift(entree);
+  if(HISTORIQUE.length>50) HISTORIQUE.length = 50;
+  try{ localStorage.setItem("netvox_historique", JSON.stringify(HISTORIQUE)); }catch(e){}
+  rendreHistorique();
+}
+function rendreHistorique(){
+  if(!HISTORIQUE.length){
+    histList.innerHTML = '<p class="hist-empty">Aucune demande traitée pour l\'instant.</p>';
+    histClear.style.display = "none";
+    return;
+  }
+  histClear.style.display = "inline-block";
+  const cls = {ok:"ok", absent:"absent", erreur:"err"};
+  const lib = {ok:"diagnostic généré", absent:"info absente", erreur:"erreur"};
+  histList.innerHTML = HISTORIQUE.map(h=>
+    '<div class="hist"><div class="top"><span class="statut '+(cls[h.statut]||"err")+'" style="margin:0">'+(lib[h.statut]||h.statut)+'</span><span class="date">'+echapper(h.date||"")+'</span></div>' +
+    '<p class="demande">'+echapper(h.demande)+'</p>' +
+    (h.resume ? '<p class="resume">'+echapper(h.resume)+(h.nb?' — '+h.nb+' source(s) citée(s)':'')+'</p>' : "") +
+    '</div>').join("");
+}
+histClear.addEventListener("click", ()=>{
+  HISTORIQUE = [];
+  try{ localStorage.setItem("netvox_historique","[]"); }catch(e){}
+  rendreHistorique();
+});
+
+/* ============ Base documentaire ============ */
+const kbList = document.getElementById("kbList");
+const kbMeta = document.getElementById("kbMeta");
+
+async function rendreBase(){
+  try{
+    const [docs, statut] = await Promise.all([api("/api/documents"), api("/api/status")]);
+    const liste = docs.documents;
+    kbMeta.textContent = liste.length+" documents · "+statut.fragments+" fragments indexés · mode : "+
+      (statut.mode==="embeddings" ? statut.modele_embeddings : "TF-IDF local")+" · seuil de pertinence : "+statut.seuil;
+    kbList.innerHTML = liste.map(d=>
+      '<div class="doc"><button class="doc-head" aria-expanded="false">' +
+      '<span class="titre">'+echapper(d.titre)+(d.ajoute?' <span style="font-family:var(--mono);font-size:10px;color:var(--accent-deep)">· ajouté</span>':'')+'</span>' +
+      '<span class="type">'+echapper(d.type)+'</span>' +
+      '<span class="chev">›</span></button>' +
+      '<p class="src-tag">'+d.fragments.length+' fragment(s) : '+d.fragments.join(", ")+(d.fichier?' · '+echapper(d.fichier):'')+'</p>' +
+      '<div class="doc-body">'+echapper(d.contenu)+'</div></div>'
+    ).join("");
+    kbList.querySelectorAll(".doc-head").forEach(b=>{
+      b.addEventListener("click", ()=>{
+        const doc = b.parentElement;
+        doc.classList.toggle("open");
+        b.setAttribute("aria-expanded", doc.classList.contains("open"));
+      });
+    });
+  }catch(e){
+    kbMeta.textContent = "Impossible de charger la base : "+e.message;
+  }
+}
+
+document.getElementById("ndSubmit").addEventListener("click", async ()=>{
+  const btn = document.getElementById("ndSubmit");
+  const flash = document.getElementById("ndFlash");
+  const titre = document.getElementById("ndTitre").value.trim();
+  const type = document.getElementById("ndType").value;
+  const contenu = document.getElementById("ndContenu").value.trim();
+  if(!titre || !contenu){
+    flash.style.display="block"; flash.style.color="var(--err)";
+    flash.textContent = "Titre et contenu sont requis.";
+    return;
+  }
+  btn.disabled = true;
+  flash.style.display="block"; flash.style.color="var(--ink-soft)";
+  flash.textContent = "Indexation en cours…";
+  try{
+    await api("/api/documents", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({titre, type, contenu})
+    });
+    document.getElementById("ndTitre").value = "";
+    document.getElementById("ndContenu").value = "";
+    flash.style.color="var(--ok)";
+    flash.textContent = "Document ajouté et indexé — interrogeable immédiatement.";
+    rendreBase();
+  }catch(e){
+    flash.style.color="var(--err)";
+    flash.textContent = "Échec : "+e.message;
+  }
+  btn.disabled = false;
+  setTimeout(()=>{ flash.style.display="none"; }, 5000);
+});
+
+/* ============ Navigation + init ============ */
+document.querySelectorAll("nav button").forEach(b=>{
+  b.addEventListener("click", ()=>{
+    document.querySelectorAll("nav button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    document.querySelectorAll(".tab").forEach(t=>t.classList.remove("visible"));
+    document.getElementById("tab-"+b.dataset.tab).classList.add("visible");
+  });
+});
+
+chargerStatut();
+rendreBase();
+rendreHistorique();
+</script>
+</body>
+</html>

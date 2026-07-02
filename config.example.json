@@ -1,0 +1,9 @@
+{
+  "mistral_api_key": "VOTRE_CLE_API_MISTRAL",
+  "modele_chat": "mistral-small-latest",
+  "modele_embeddings": "mistral-embed",
+  "seuil_pertinence": 0.70,
+  "seuil_pertinence_tfidf": 0.12,
+  "top_k": 4,
+  "port": 8787
+}

@@ -1,0 +1,14 @@
+# Secrets
+config.json
+
+# Cache d'indexation (régénéré au premier lancement)
+data/*.json
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+
+# Éditeurs / OS
+.vscode/
+.DS_Store
