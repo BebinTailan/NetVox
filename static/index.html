@@ -317,8 +317,9 @@ const MSG_ERREURS_RECO = {
   "no-speech":"Aucune parole détectée — parlez après avoir appuyé sur le micro, ou tapez votre demande.",
   "not-allowed":"Accès au micro refusé — autorisez le micro dans le navigateur, ou tapez votre demande.",
   "audio-capture":"Aucun micro détecté sur ce poste — tapez votre demande.",
-  "network":"La reconnaissance vocale du navigateur nécessite une connexion Internet — tapez votre demande."
+  "network":"La reconnaissance vocale du navigateur nécessite une connexion Internet (elle envoie l'audio aux serveurs de Google) — vérifiez votre connexion, un VPN ou un pare-feu peut la bloquer. Vous pouvez taper votre demande."
 };
+let gotResult = false, entenduAudio = false;
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 if(SR){
@@ -326,12 +327,23 @@ if(SR){
   reco.lang = "fr-FR";
   reco.interimResults = true;
   reco.continuous = false;
+  reco.onaudiostart = ()=>{ entenduAudio = true; };
   reco.onresult = (e)=>{
+    gotResult = true;
     let final = "", interim = "";
     for(const r of e.results){ (r.isFinal ? final += r[0].transcript : interim += r[0].transcript); }
     transcriptEl.value = (final + interim).trim();
   };
-  reco.onend = ()=>{ recording=false; micBtn.classList.remove("rec"); micHint.innerHTML = "Appuyez sur le micro et décrivez l'incident"; };
+  reco.onend = ()=>{
+    recording=false; micBtn.classList.remove("rec");
+    micHint.innerHTML = "Appuyez sur le micro et décrivez l'incident";
+    if(!gotResult && transcriptEl.value.trim()===""){
+      captureErr.style.display="block";
+      captureErr.textContent = entenduAudio
+        ? "Le micro capte du son mais aucun mot n'a été reconnu — parlez plus fort/distinctement juste après avoir appuyé, ou vérifiez qu'il ne s'agit pas du mauvais périphérique d'entrée dans les réglages son de Windows."
+        : "Aucun son du micro n'a été détecté — vérifiez les réglages de confidentialité micro de Windows (Paramètres → Confidentialité → Microphone → autoriser les applications de bureau/le navigateur) et le périphérique d'entrée sélectionné.";
+    }
+  };
   reco.onerror = (e)=>{
     recording=false; micBtn.classList.remove("rec");
     captureErr.style.display="block";
@@ -347,6 +359,7 @@ micBtn.addEventListener("click", ()=>{
   captureErr.style.display="none";
   if(recording){ reco.stop(); return; }
   transcriptEl.value = "";
+  gotResult = false; entenduAudio = false;
   try{
     reco.start(); recording = true;
     micBtn.classList.add("rec");
