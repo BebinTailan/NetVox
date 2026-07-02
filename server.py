@@ -13,6 +13,8 @@ Backend : bibliothèque standard Python uniquement (aucun pip install).
 Lancement :  python3 server.py   puis ouvrir http://localhost:8787
 """
 
+import base64
+import io
 import json
 import hashlib
 import math
@@ -22,6 +24,7 @@ import sys
 import unicodedata
 import urllib.request
 import urllib.error
+import uuid
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -35,7 +38,8 @@ CORPUS_DIR = os.path.join(BASE_DIR, "corpus")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 CACHE_FILE = os.path.join(DATA_DIR, "embeddings_cache.json")
-DOCS_AJOUTES_FILE = os.path.join(DATA_DIR, "docs_ajoutes.json")
+DOCS_AJOUTES_FILE = os.path.join(DATA_DIR, "docs_ajoutes.json")  # ancien format, lu une fois à la migration
+DOCUMENTS_FILE = os.path.join(DATA_DIR, "documents.json")
 
 with open(os.path.join(BASE_DIR, "config.json"), encoding="utf-8") as f:
     CONFIG = json.load(f)
@@ -108,17 +112,43 @@ def _parser_md(chemin: str) -> dict:
     }
 
 
-def charger_corpus() -> list:
+def _nouvel_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def _sauver_documents(docs: list) -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(DOCUMENTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(docs, f, ensure_ascii=False, indent=1)
+
+
+def _migrer_documents() -> list:
+    """Construit le store unifié data/documents.json à partir du corpus initial
+    (et de l'ancien data/docs_ajoutes.json s'il existe). Ne s'exécute qu'une fois :
+    au premier lancement, ou si documents.json a été supprimé."""
     docs = []
     for nom in sorted(os.listdir(CORPUS_DIR)):
         if nom.endswith(".md"):
-            docs.append(_parser_md(os.path.join(CORPUS_DIR, nom)))
+            d = _parser_md(os.path.join(CORPUS_DIR, nom))
+            d["id"] = _nouvel_id()
+            d["origine"] = "corpus"
+            docs.append(d)
     if os.path.exists(DOCS_AJOUTES_FILE):
         with open(DOCS_AJOUTES_FILE, encoding="utf-8") as f:
             for d in json.load(f):
-                d["ajoute"] = True
-                docs.append(d)
+                docs.append({
+                    "id": _nouvel_id(), "titre": d["titre"], "type": d["type"],
+                    "contenu": d["contenu"], "origine": "ajoute", "fichier": None,
+                })
+    _sauver_documents(docs)
     return docs
+
+
+def charger_documents() -> list:
+    if not os.path.exists(DOCUMENTS_FILE):
+        return _migrer_documents()
+    with open(DOCUMENTS_FILE, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def chunker(doc: dict, doc_index: int, taille_max: int = 450) -> list:
@@ -223,7 +253,7 @@ def _indexer_tfidf(chunks: list) -> None:
 def indexer() -> None:
     """(Re)construit l'index complet. Bascule en TF-IDF si l'API échoue."""
     global CORPUS, CHUNKS, MODE
-    CORPUS = charger_corpus()
+    CORPUS = charger_documents()
     CHUNKS = []
     for i, doc in enumerate(CORPUS):
         CHUNKS.extend(chunker(doc, i))
@@ -331,19 +361,51 @@ def generer_diagnostic(demande: str) -> dict:
             "sources": sources_payload}
 
 # ---------------------------------------------------------------------------
-# Ajout d'un document à chaud (bonus palier 2)
+# Gestion des documents à chaud : ajout, édition, suppression, import PDF
 # ---------------------------------------------------------------------------
-def ajouter_document(titre: str, type_doc: str, contenu: str) -> dict:
-    ajoutes = []
-    if os.path.exists(DOCS_AJOUTES_FILE):
-        with open(DOCS_AJOUTES_FILE, encoding="utf-8") as f:
-            ajoutes = json.load(f)
-    ajoutes.append({"titre": titre, "type": type_doc, "contenu": contenu})
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(DOCS_AJOUTES_FILE, "w", encoding="utf-8") as f:
-        json.dump(ajoutes, f, ensure_ascii=False, indent=1)
+def ajouter_document(titre: str, type_doc: str, contenu: str, origine: str = "ajoute") -> dict:
+    docs = charger_documents()
+    docs.append({"id": _nouvel_id(), "titre": titre, "type": type_doc, "contenu": contenu,
+                 "origine": origine, "fichier": None})
+    _sauver_documents(docs)
     indexer()   # réindexation immédiate (les embeddings existants sortent du cache)
     return {"ok": True, "documents": len(CORPUS), "fragments": len(CHUNKS)}
+
+
+def modifier_document(doc_id: str, titre: str, type_doc: str, contenu: str) -> dict:
+    docs = charger_documents()
+    for d in docs:
+        if d["id"] == doc_id:
+            d["titre"], d["type"], d["contenu"] = titre, type_doc, contenu
+            break
+    else:
+        raise ValueError("Document introuvable")
+    _sauver_documents(docs)
+    indexer()
+    return {"ok": True, "documents": len(CORPUS), "fragments": len(CHUNKS)}
+
+
+def supprimer_document(doc_id: str) -> dict:
+    docs = charger_documents()
+    restants = [d for d in docs if d["id"] != doc_id]
+    if len(restants) == len(docs):
+        raise ValueError("Document introuvable")
+    _sauver_documents(restants)
+    indexer()
+    return {"ok": True, "documents": len(CORPUS), "fragments": len(CHUNKS)}
+
+
+def pdf_vers_markdown(pdf_bytes: bytes) -> str:
+    """Extrait le texte d'un PDF (via pypdf) et le reformate en paragraphes markdown."""
+    try:
+        from pypdf import PdfReader
+    except ImportError as e:
+        raise RuntimeError("pypdf n'est pas installé — lancez : pip install -r requirements.txt") from e
+    lecteur = PdfReader(io.BytesIO(pdf_bytes))
+    pages = [(page.extract_text() or "").strip() for page in lecteur.pages]
+    brut = "\n\n".join(p for p in pages if p)
+    paragraphes = [re.sub(r"[ \t]+", " ", p).strip() for p in re.split(r"\n\s*\n", brut)]
+    return "\n\n".join(p for p in paragraphes if p)
 
 # ---------------------------------------------------------------------------
 # Serveur HTTP
@@ -383,9 +445,9 @@ class NetVoxHandler(BaseHTTPRequestHandler):
             docs = []
             for i, d in enumerate(CORPUS):
                 cids = [c["cid"] for c in CHUNKS if c["doc_index"] == i]
-                docs.append({"titre": d["titre"], "type": d["type"], "contenu": d["contenu"],
-                             "fichier": d.get("fichier"), "ajoute": d.get("ajoute", False),
-                             "fragments": cids})
+                docs.append({"id": d["id"], "titre": d["titre"], "type": d["type"],
+                             "contenu": d["contenu"], "fichier": d.get("fichier"),
+                             "origine": d.get("origine", "ajoute"), "fragments": cids})
             self._json(200, {"documents": docs})
         else:
             self.send_error(404)
@@ -419,6 +481,60 @@ class NetVoxHandler(BaseHTTPRequestHandler):
                 self._json(200, ajouter_document(titre, type_doc, contenu))
             except Exception as e:                              # noqa: BLE001
                 self._json(502, {"erreur": f"Échec de l'indexation : {e}"})
+
+        elif self.path == "/api/documents/pdf":
+            titre = (corps.get("titre") or "").strip()
+            type_doc = (corps.get("type") or "document").strip()
+            pdf_b64 = corps.get("pdf_base64") or ""
+            if not titre or not pdf_b64:
+                self._json(400, {"erreur": "Titre et fichier PDF requis"})
+                return
+            try:
+                pdf_bytes = base64.b64decode(pdf_b64)
+                contenu = pdf_vers_markdown(pdf_bytes)
+                if not contenu:
+                    self._json(400, {"erreur": "Aucun texte extrait du PDF (PDF scanné/image non supporté)"})
+                    return
+                self._json(200, ajouter_document(titre, type_doc, contenu, origine="pdf"))
+            except Exception as e:                              # noqa: BLE001
+                self._json(502, {"erreur": f"Échec de l'import PDF : {e}"})
+        else:
+            self.send_error(404)
+
+    def do_PUT(self):                                           # noqa: N802
+        longueur = int(self.headers.get("Content-Length", 0))
+        try:
+            corps = json.loads(self.rfile.read(longueur).decode("utf-8")) if longueur else {}
+        except json.JSONDecodeError:
+            self._json(400, {"erreur": "JSON invalide"})
+            return
+
+        if self.path.startswith("/api/documents/"):
+            doc_id = self.path[len("/api/documents/"):]
+            titre = (corps.get("titre") or "").strip()
+            type_doc = (corps.get("type") or "document").strip()
+            contenu = (corps.get("contenu") or "").strip()
+            if not titre or not contenu:
+                self._json(400, {"erreur": "Titre et contenu requis"})
+                return
+            try:
+                self._json(200, modifier_document(doc_id, titre, type_doc, contenu))
+            except ValueError as e:
+                self._json(404, {"erreur": str(e)})
+            except Exception as e:                              # noqa: BLE001
+                self._json(502, {"erreur": f"Échec de la modification : {e}"})
+        else:
+            self.send_error(404)
+
+    def do_DELETE(self):                                        # noqa: N802
+        if self.path.startswith("/api/documents/"):
+            doc_id = self.path[len("/api/documents/"):]
+            try:
+                self._json(200, supprimer_document(doc_id))
+            except ValueError as e:
+                self._json(404, {"erreur": str(e)})
+            except Exception as e:                              # noqa: BLE001
+                self._json(502, {"erreur": f"Échec de la suppression : {e}"})
         else:
             self.send_error(404)
 

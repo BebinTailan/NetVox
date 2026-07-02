@@ -1,0 +1,3 @@
+# Optionnel : uniquement nécessaire pour l'import de documents PDF.
+# Le reste de l'application (serveur, RAG, diagnostic) ne dépend que de la bibliothèque standard.
+pypdf>=5.0

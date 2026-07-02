@@ -121,6 +121,17 @@ textarea#transcript:focus{outline:2px solid var(--accent);outline-offset:0;borde
 .doc.open .doc-body{display:block}
 .doc .src-tag{font-family:var(--mono);font-size:11px;color:var(--accent-deep);padding:0 16px 12px;display:none}
 .doc.open .src-tag{display:block}
+.origine-tag{font-family:var(--mono);font-size:10px;color:var(--accent-deep);font-weight:500;margin-left:6px}
+.doc-actions{display:flex;gap:8px;margin-top:12px}
+.doc-actions button{border:1px solid var(--line);background:none;border-radius:7px;padding:6px 13px;font-size:12.5px;color:var(--ink);font-weight:500}
+.doc-actions button:hover{border-color:var(--accent);color:var(--accent-deep)}
+.doc-actions button.danger{color:var(--err)}
+.doc-actions button.danger:hover{border-color:var(--err)}
+.doc-edit-form{display:none}
+.doc-edit-form label{display:block;font-size:12px;font-weight:500;margin:10px 0 4px}
+.doc-edit-form input[type=text],.doc-edit-form select,.doc-edit-form textarea{width:100%;border:1px solid var(--line);border-radius:7px;padding:8px 10px;font-family:inherit;font-size:13.5px;background:var(--card);color:var(--ink)}
+.doc-edit-form textarea{min-height:110px;resize:vertical;font-family:var(--mono);font-size:12.5px}
+.doc-flash{margin-top:8px;font-size:12.5px;display:none}
 .add-doc{margin-top:28px}
 .add-doc h3{font-size:15px;font-weight:600;margin-bottom:4px}
 .add-doc p.sub{font-size:13px;color:var(--ink-soft);margin-bottom:14px}
@@ -223,6 +234,23 @@ textarea#transcript:focus{outline:2px solid var(--accent);outline-offset:0;borde
       <textarea id="ndContenu" placeholder="Texte du document (symptômes, cause, étapes de résolution…)"></textarea>
       <button class="submit" id="ndSubmit">Ajouter à la base</button>
       <p class="flash" id="ndFlash"></p>
+    </div>
+
+    <div class="add-doc">
+      <h3>Importer un PDF</h3>
+      <p class="sub">Le texte est extrait du PDF, converti en markdown, puis découpé, vectorisé et immédiatement interrogeable.</p>
+      <label for="pdfTitre">Titre</label>
+      <input type="text" id="pdfTitre" placeholder="Ex. Procédure — Sauvegarde des configurations switch">
+      <label for="pdfType">Type</label>
+      <select id="pdfType">
+        <option value="procédure">Procédure</option>
+        <option value="ticket résolu">Ticket résolu</option>
+        <option value="faq">FAQ</option>
+      </select>
+      <label for="pdfFichier">Fichier PDF</label>
+      <input type="file" id="pdfFichier" accept="application/pdf">
+      <button class="submit" id="pdfSubmit">Importer et indexer</button>
+      <p class="flash" id="pdfFlash"></p>
     </div>
   </div>
 </section>
@@ -468,6 +496,14 @@ histClear.addEventListener("click", ()=>{
 const kbList = document.getElementById("kbList");
 const kbMeta = document.getElementById("kbMeta");
 
+const LIB_ORIGINE = {corpus:"démo", ajoute:"ajouté", pdf:"import PDF"};
+const OPTIONS_TYPE = ["procédure","ticket résolu","faq"];
+
+function optionsType(selection){
+  return OPTIONS_TYPE.map(t=>'<option value="'+echapper(t)+'"'+(t===selection?' selected':'')+'>'+
+    t.charAt(0).toUpperCase()+t.slice(1)+'</option>').join("");
+}
+
 async function rendreBase(){
   try{
     const [docs, statut] = await Promise.all([api("/api/documents"), api("/api/status")]);
@@ -475,24 +511,92 @@ async function rendreBase(){
     kbMeta.textContent = liste.length+" documents · "+statut.fragments+" fragments indexés · mode : "+
       (statut.mode==="embeddings" ? statut.modele_embeddings : "TF-IDF local")+" · seuil de pertinence : "+statut.seuil;
     kbList.innerHTML = liste.map(d=>
-      '<div class="doc"><button class="doc-head" aria-expanded="false">' +
-      '<span class="titre">'+echapper(d.titre)+(d.ajoute?' <span style="font-family:var(--mono);font-size:10px;color:var(--accent-deep)">· ajouté</span>':'')+'</span>' +
+      '<div class="doc" data-id="'+echapper(d.id)+'"><button class="doc-head" aria-expanded="false">' +
+      '<span class="titre">'+echapper(d.titre)+' <span class="origine-tag">· '+(LIB_ORIGINE[d.origine]||d.origine)+'</span></span>' +
       '<span class="type">'+echapper(d.type)+'</span>' +
       '<span class="chev">›</span></button>' +
       '<p class="src-tag">'+d.fragments.length+' fragment(s) : '+d.fragments.join(", ")+(d.fichier?' · '+echapper(d.fichier):'')+'</p>' +
-      '<div class="doc-body">'+echapper(d.contenu)+'</div></div>'
+      '<div class="doc-body">' +
+        '<div class="doc-view">' +
+          '<div class="doc-contenu" style="white-space:pre-wrap">'+echapper(d.contenu)+'</div>' +
+          '<div class="doc-actions">' +
+            '<button class="doc-edit">Modifier</button>' +
+            '<button class="doc-delete danger">Supprimer</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="doc-edit-form">' +
+          '<label>Titre</label><input type="text" class="ed-titre" value="'+echapper(d.titre)+'">' +
+          '<label>Type</label><select class="ed-type">'+optionsType(d.type)+'</select>' +
+          '<label>Contenu</label><textarea class="ed-contenu">'+echapper(d.contenu)+'</textarea>' +
+          '<div class="doc-actions">' +
+            '<button class="doc-save">Enregistrer</button>' +
+            '<button class="doc-cancel">Annuler</button>' +
+          '</div>' +
+          '<p class="doc-flash"></p>' +
+        '</div>' +
+      '</div></div>'
     ).join("");
-    kbList.querySelectorAll(".doc-head").forEach(b=>{
-      b.addEventListener("click", ()=>{
-        const doc = b.parentElement;
-        doc.classList.toggle("open");
-        b.setAttribute("aria-expanded", doc.classList.contains("open"));
-      });
-    });
   }catch(e){
     kbMeta.textContent = "Impossible de charger la base : "+e.message;
   }
 }
+
+kbList.addEventListener("click", async (e)=>{
+  const head = e.target.closest(".doc-head");
+  if(head){
+    const doc = head.parentElement;
+    doc.classList.toggle("open");
+    head.setAttribute("aria-expanded", doc.classList.contains("open"));
+    return;
+  }
+  const docEl = e.target.closest(".doc");
+  if(!docEl) return;
+  const id = docEl.dataset.id;
+
+  if(e.target.closest(".doc-delete")){
+    if(!confirm("Supprimer définitivement ce document de la base de connaissance ?")) return;
+    try{
+      await api("/api/documents/"+encodeURIComponent(id), {method:"DELETE"});
+      rendreBase();
+    }catch(err){ alert("Échec de la suppression : "+err.message); }
+    return;
+  }
+  if(e.target.closest(".doc-edit")){
+    docEl.querySelector(".doc-view").style.display = "none";
+    docEl.querySelector(".doc-edit-form").style.display = "block";
+    return;
+  }
+  if(e.target.closest(".doc-cancel")){
+    docEl.querySelector(".doc-edit-form").style.display = "none";
+    docEl.querySelector(".doc-view").style.display = "block";
+    return;
+  }
+  if(e.target.closest(".doc-save")){
+    const form = docEl.querySelector(".doc-edit-form");
+    const titre = form.querySelector(".ed-titre").value.trim();
+    const type = form.querySelector(".ed-type").value;
+    const contenu = form.querySelector(".ed-contenu").value.trim();
+    const flash = form.querySelector(".doc-flash");
+    if(!titre || !contenu){
+      flash.style.display="block"; flash.style.color="var(--err)";
+      flash.textContent = "Titre et contenu sont requis.";
+      return;
+    }
+    flash.style.display="block"; flash.style.color="var(--ink-soft)";
+    flash.textContent = "Enregistrement et réindexation…";
+    try{
+      await api("/api/documents/"+encodeURIComponent(id), {
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({titre, type, contenu})
+      });
+      rendreBase();
+    }catch(err){
+      flash.style.color="var(--err)";
+      flash.textContent = "Échec : "+err.message;
+    }
+  }
+});
 
 document.getElementById("ndSubmit").addEventListener("click", async ()=>{
   const btn = document.getElementById("ndSubmit");
@@ -518,6 +622,49 @@ document.getElementById("ndSubmit").addEventListener("click", async ()=>{
     document.getElementById("ndContenu").value = "";
     flash.style.color="var(--ok)";
     flash.textContent = "Document ajouté et indexé — interrogeable immédiatement.";
+    rendreBase();
+  }catch(e){
+    flash.style.color="var(--err)";
+    flash.textContent = "Échec : "+e.message;
+  }
+  btn.disabled = false;
+  setTimeout(()=>{ flash.style.display="none"; }, 5000);
+});
+
+function fichierVersBase64(fichier){
+  return new Promise((resolve, reject)=>{
+    const lecteur = new FileReader();
+    lecteur.onload = ()=> resolve(lecteur.result.split(",")[1]);
+    lecteur.onerror = ()=> reject(new Error("Lecture du fichier impossible"));
+    lecteur.readAsDataURL(fichier);
+  });
+}
+
+document.getElementById("pdfSubmit").addEventListener("click", async ()=>{
+  const btn = document.getElementById("pdfSubmit");
+  const flash = document.getElementById("pdfFlash");
+  const titre = document.getElementById("pdfTitre").value.trim();
+  const type = document.getElementById("pdfType").value;
+  const fichier = document.getElementById("pdfFichier").files[0];
+  if(!titre || !fichier){
+    flash.style.display="block"; flash.style.color="var(--err)";
+    flash.textContent = "Titre et fichier PDF sont requis.";
+    return;
+  }
+  btn.disabled = true;
+  flash.style.display="block"; flash.style.color="var(--ink-soft)";
+  flash.textContent = "Extraction du texte et indexation en cours…";
+  try{
+    const pdf_base64 = await fichierVersBase64(fichier);
+    await api("/api/documents/pdf", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({titre, type, pdf_base64})
+    });
+    document.getElementById("pdfTitre").value = "";
+    document.getElementById("pdfFichier").value = "";
+    flash.style.color="var(--ok)";
+    flash.textContent = "PDF importé et indexé — interrogeable immédiatement.";
     rendreBase();
   }catch(e){
     flash.style.color="var(--err)";
